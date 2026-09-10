@@ -632,6 +632,235 @@
         }
     }
 
+    // ====== 多帧合并：逐帧导出 PNG 序列（方案 A）======
+    // 行为：把选中图层预合成一次，按「合成工作区」范围逐帧导出 PNG，
+    // 每帧异步等落盘（与单帧合并同一套 IEND 检测），最后把整组 PNG
+    // 作为「PNG 序列」一次性导入成一个图层。其余逻辑与单帧合并一致。
+    function doMergeFrames(keepOnDisk, autoFix) {
+        if (autoFix === undefined) autoFix = false;
+        if ($.global._syFrames) { alert("[SY_Merge] 多帧合并正在进行中，请稍候。"); return; }
+        app.beginUndoGroup("SY Merge - Frames");
+        try {
+            var comp = app.project.activeItem;
+            if (!(comp instanceof CompItem)) {
+                alert("[SY_Merge] 请先打开一个合成。");
+                return;
+            }
+            var sel = comp.selectedLayers;
+            if (sel.length < 1) {
+                alert("[SY_Merge] 请至少选中一个图层。");
+                return;
+            }
+
+            // ---- 帧范围：合成工作区 ----
+            var fd = comp.frameDuration;
+            var firstFrame = Math.round(comp.workAreaStart / fd);
+            var lastFrame = Math.round((comp.workAreaStart + comp.workAreaDuration) / fd);
+            if (lastFrame < firstFrame) {
+                alert("[SY_Merge] 工作区范围无效，请先在合成里设置工作区（B+N / B+Option+N）。");
+                return;
+            }
+            var frameCount = lastFrame - firstFrame + 1;
+            if (frameCount < 1) {
+                alert("[SY_Merge] 工作区没有可合并的帧。");
+                return;
+            }
+            if (frameCount > 300) {
+                if (!confirm("[SY_Merge] 将合并 " + frameCount + " 帧，可能较慢。\n确定继续？")) return;
+            }
+
+            // ---- 选中图层信息 ----
+            var topIndex = sel[0].index, bottomIndex = sel[0].index, bottomName = sel[0].name;
+            for (var s = 0; s < sel.length; s++) {
+                if (sel[s].index < topIndex) topIndex = sel[s].index;
+                if (sel[s].index > bottomIndex) { bottomIndex = sel[s].index; bottomName = sel[s].name; }
+            }
+            var srcCompIdList = [];
+            for (var sc = 0; sc < sel.length; sc++) {
+                try { if (sel[sc].source && sel[sc].source instanceof CompItem) srcCompIdList.push(sel[sc].source.id); } catch (eSrc) {}
+            }
+            var anchorLayerId = -1;
+            if (topIndex > 1) { try { anchorLayerId = comp.layer(topIndex - 1).id; } catch (eAnch) {} }
+
+            var indices = [];
+            for (var i = 0; i < sel.length; i++) indices.push(sel[i].index);
+            var preComp = comp.layers.precompose(indices, "Raster_src_" + bottomName, true);
+
+            var outFolder;
+            if (app.project.file) outFolder = new Folder(app.project.file.parent.fsName + "/_raster_cache");
+            else outFolder = Folder.temp;
+            if (!outFolder.exists) outFolder.create();
+            var stamp = (new Date()).getTime();
+
+            var st = {
+                compId: comp.id, preCompId: preComp.id, preCompName: preComp.name,
+                anchorLayerId: anchorLayerId, mergeName: bottomName,
+                srcCompIdList: srcCompIdList,
+                autoFix: autoFix,
+                outFolder: outFolder.fsName, stamp: stamp, fd: fd,
+                firstFrame: firstFrame, lastFrame: lastFrame,
+                f: firstFrame, paths: []
+            };
+            $.global._syFrames = st;
+            _syFramesStep();
+        } catch (err) {
+            alert("[SY_Merge] 出错: " + err.toString() + (err.line ? "  (line " + err.line + ")" : ""));
+        } finally {
+            app.endUndoGroup();
+        }
+    }
+
+    function _syFramesStep() {
+        var st = $.global._syFrames;
+        if (!st) return;
+        if (st.f > st.lastFrame) { _syFramesFinish(); return; }
+        var preComp = null;
+        for (var i = 1; i <= app.project.numItems; i++) {
+            var it = app.project.item(i);
+            if (it.id === st.preCompId) preComp = it;
+            else if (!preComp && it instanceof CompItem && it.name === st.preCompName) preComp = it;
+        }
+        if (!preComp) { alert("[SY_Merge] 找不到临时预合成，已中止。"); $.global._syFrames = null; return; }
+        var t = st.f * st.fd;
+        var pad = ("0000" + st.f).slice(-4);
+        var pngFile = new File(st.outFolder + "/raster_" + st.stamp + "_" + pad + ".png");
+        preComp.saveFrameToPng(t, pngFile);
+        st.curPath = pngFile.fsName;
+        st.curTries = 0; st.curLastSize = -1; st.curStable = 0;
+        $.global._syFrames = st;
+        app.scheduleTask("$.global._syFramesPoll();", 50, false);
+    }
+
+    function _syFramesPoll() {
+        var st = $.global._syFrames;
+        if (!st) return;
+        st.curTries = (st.curTries || 0) + 1;
+        if (pngIsComplete(st.curPath)) {
+            st.paths.push(st.curPath);
+            st.f++;
+            _syFramesStep();
+            return;
+        }
+        try {
+            var f = new File(st.curPath);
+            if (f.exists && f.length > 0) {
+                if (f.length === st.curLastSize) {
+                    st.curStable = (st.curStable || 0) + 1;
+                    if (st.curStable >= 10) {
+                        st.paths.push(st.curPath); st.f++; _syFramesStep(); return;
+                    }
+                } else { st.curStable = 0; st.curLastSize = f.length; }
+            }
+        } catch (e) {}
+        if (st.curTries < 400) {
+            app.scheduleTask("$.global._syFramesPoll();", 50, false);
+            return;
+        }
+        st.paths.push(st.curPath); st.f++; _syFramesStep();
+    }
+
+    function _syFramesFinish() {
+        var st = $.global._syFrames;
+        if (!st) return;
+        app.beginUndoGroup("SY Merge - Frames Import");
+        try {
+            var comp = app.project.itemByID(st.compId);
+            if (!comp) { alert("[SY_Merge] 找不到原合成。"); return; }
+            var preComp = app.project.itemByID(st.preCompId);
+            if (preComp) {
+                for (var k = comp.numLayers; k >= 1; k--) {
+                    try { if (comp.layer(k).source === preComp) { comp.layer(k).enabled = false; comp.layer(k).shy = true; break; } } catch (e2) {}
+                }
+            }
+            if (st.paths.length < 1) { alert("[SY_Merge] 没有成功导出任何帧。"); return; }
+            st.paths.sort();
+            var firstPath = st.paths[0];
+            var footage = null, lastErr = null;
+            for (var attempt = 0; attempt < 5; attempt++) {
+                try {
+                    var io = new ImportOptions(new File(firstPath));
+                    io.importAs = ImportAsType.FOOTAGE;
+                    io.sequence = true;
+                    try { io.forceAlphabetical = true; } catch (eF) {}
+                    footage = app.project.importFile(io);
+                    break;
+                } catch (impErr) {
+                    lastErr = impErr;
+                    if (attempt < 4) $.sleep(30);
+                }
+            }
+            if (!footage) {
+                alert("[SY_Merge] 导入 PNG 序列失败：\n" + (lastErr ? lastErr.toString() : "") +
+                      "\n预合成已保留，你可手动导入。");
+                return;
+            }
+            footage.name = st.mergeName;
+            try {
+                if (footage.mainSource.hasAlpha) {
+                    footage.mainSource.alphaMode = AlphaMode.PREMULTIPLIED;
+                    footage.mainSource.premulColor = [0, 0, 0];
+                }
+            } catch (eA) {}
+            var newLayer = comp.layers.add(footage);
+            newLayer.name = st.mergeName;
+            try {
+                if (st.anchorLayerId > 0) {
+                    for (var li = 1; li <= comp.numLayers; li++) {
+                        if (comp.layer(li).id === st.anchorLayerId) { newLayer.moveAfter(comp.layer(li)); break; }
+                    }
+                } else { newLayer.moveToBeginning(); }
+            } catch (e0) {}
+            try { comp.hideShyLayers = true; } catch (eShy) {}
+
+            // ---- 自动修复黑底：整组帧交给 PNGfix 转 straight（后台，不阻塞）----
+            if (st.autoFix) {
+                var donePath = _syFramesFixLaunch(st.paths, footage.id);
+                if (!donePath) _fixLog("frames fix launch failed; 保持预乘显示");
+            }
+        } catch (err) {
+            alert("[SY_Merge] 导入序列出错: " + err.toString() + (err.line ? "  (line " + err.line + ")" : ""));
+        } finally {
+            app.endUndoGroup();
+        }
+    }
+
+    // 把整组帧路径写进 pathfile，启动 PNGfix 转 straight；复用全局轮询表（按 footageId 切 STRAIGHT）
+    function _syFramesFixLaunch(paths, footageId) {
+        try {
+            var tmpFile = new File(Folder.temp.fsName + "/SY_Merge_frames_pathfile.txt");
+            tmpFile.encoding = "UTF-8";
+            try {
+                tmpFile.open("w");
+                for (var i = 0; i < paths.length; i++) tmpFile.writeln(paths[i]);
+                tmpFile.close();
+            } catch (eW) { _fixLog("frames pathfile write fail"); return null; }
+            var tmpPath = tmpFile.fsName.split("/").join("\\");
+
+            var stamp = (new Date()).getTime() + "_" + Math.floor(Math.random() * 100000);
+            var doneFile = new File(Folder.temp.fsName + "/SY_Merge_frames_done_" + stamp + ".txt");
+            var donePath = doneFile.fsName.split("/").join("\\");
+
+            if (SY_FIX_EXE && new File(SY_FIX_EXE).exists) {
+                var exeCmd = SY_FIX_EXE.split("/").join("\\");
+                var exeArgs = '--silent --pathfile "' + tmpPath + '" --donefile "' + donePath + '"';
+                var r = _syLaunchDetached(exeCmd, exeArgs, donePath, "frames", "exe");
+                if (r) {
+                    if (!$.global._syMergePolls) $.global._syMergePolls = [];
+                    $.global._syMergePolls.push({ pngPath: "frames:" + footageId, footageId: footageId, donePath: donePath, tries: 0 });
+                    if ($.global._syMergePollRunning !== true) {
+                        $.global._syMergePollRunning = true;
+                        app.scheduleTask("$.global._syMergePollFn();", 400, false);
+                    }
+                    return donePath;
+                }
+            }
+            _fixLog("frames fix: 未找到 exe");
+            return null;
+        } catch (e) { _fixLog("frames fix exception: " + e.toString()); return null; }
+    }
+    $.global._syFramesStep = _syFramesStep;
+    $.global._syFramesPoll = _syFramesPoll;
+
     // ====== 删除隐藏图层 ======
     function deleteHiddenLayers() {
         try {
@@ -690,6 +919,10 @@
         var btnMerge = pal.add("button", undefined, "\u5408\u5E76");
         btnMerge.alignment = ["fill", "center"];
         btnMerge.helpTip = "\u5C06\u9009\u4E2D\u56FE\u5C42\u5408\u5E76\u4E3A\u4E00\u5F20 PNG \u5355\u5C42 (Ctrl+Tab)";
+
+        var btnMergeFrames = pal.add("button", undefined, "\u591A\u5E27\u5408\u5E76");
+        btnMergeFrames.alignment = ["fill", "center"];
+        btnMergeFrames.helpTip = "\u9009\u4E2D\u56FE\u5C42\u6309\u5408\u6210\u5DE5\u4F5C\u533A\u8303\u56F4\u9010\u5E27\u5BFC\u51FA PNG \u5E8F\u5217\uFF08\u5BFC\u5165\u4E3A\u5355\u4E2A\u5E8F\u5217\u56FE\u5C42\uFF09";
 
         var btnFixBlack = pal.add("button", undefined, "\u5904\u7406\u53D1\u9ED1");
         btnFixBlack.alignment = ["fill", "center"];
@@ -770,6 +1003,10 @@
         // 按钮事件
         btnMerge.onClick = function () {
             doMerge(chkKeep.value, chkAutoFix.value);
+        };
+
+        btnMergeFrames.onClick = function () {
+            doMergeFrames(chkKeep.value, chkAutoFix.value);
         };
 
         btnFixBlack.onClick = function () {
