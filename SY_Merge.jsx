@@ -657,7 +657,7 @@
     }
 
     // 合并选项（供快捷键读取，保证 Ctrl+Tab 快捷键也遵守面板里的勾选状态）
-    $.global._syMergeOpts = $.global._syMergeOpts || { keepOnDisk: true, autoFix: true };
+    $.global._syMergeOpts = $.global._syMergeOpts || { keepOnDisk: true, autoFix: false };
 
     // 注册全局函数，供快捷键触发脚本和面板按钮调用
     // 注意：必须用 $.global._syMergeOpts 读取勾选状态，不能硬编码 true——
@@ -681,13 +681,6 @@
         pal.spacing = 8;
         pal.margins = [12, 12, 12, 12];
 
-        // 标题
-        var titleGrp = pal.add("group");
-        titleGrp.alignment = ["fill", "top"];
-        titleGrp.alignChildren = ["center", "center"];
-        var titleTxt = titleGrp.add("statictext", undefined, "SY Merge");
-        titleTxt.graphics.font = ScriptUI.newFont("dialog", "Bold", 14);
-
         // 分割线
         var sep1 = pal.add("panel");
         sep1.preferredSize.height = 2;
@@ -695,28 +688,28 @@
 
         // 合并按钮
         var btnMerge = pal.add("button", undefined, "\u5408\u5E76");
-        btnMerge.preferredSize.height = 36;
+        btnMerge.alignment = ["left", "center"];
         btnMerge.helpTip = "\u5C06\u9009\u4E2D\u56FE\u5C42\u5408\u5E76\u4E3A\u4E00\u5F20 PNG \u5355\u5C42 (Ctrl+Tab)";
 
         var btnFixBlack = pal.add("button", undefined, "\u5904\u7406\u53D1\u9ED1");
-        btnFixBlack.preferredSize.height = 32;
+        btnFixBlack.alignment = ["left", "center"];
         btnFixBlack.helpTip = "\u5C06\u9009\u4E2D\u7D20\u6750\u7684 Alpha \u6539\u4E3A\u300C\u9884\u4E58 - \u9ED1\u8272\u8499\u7248\u300D\uFF0C\u4FEE\u590D\u900F\u660E\u533A\u53D1\u9ED1";
 
         var btnDelHidden = pal.add("button", undefined, "\u5220\u9664\u9690\u85CF");
-        btnDelHidden.preferredSize.height = 30;
+        btnDelHidden.alignment = ["left", "center"];
         btnDelHidden.helpTip = "\u5220\u9664\u5F53\u524D\u5408\u6210\u4E2D\u5408\u5E76\u540E\u4FDD\u7559\u7684\u9690\u85CF\u6E90\u56FE\u5C42";
 
         // 选项区
         var optGrp = pal.add("group");
-        optGrp.orientation = "row";
+        optGrp.orientation = "column";
         optGrp.alignChildren = ["left", "center"];
         optGrp.spacing = 4;
         var chkKeep = optGrp.add("checkbox", undefined,
             "PNG \u4FDD\u5B58\u5230\u5DE5\u7A0B\u65C1 (_raster_cache)");
         chkKeep.value = true;
         var chkAutoFix = optGrp.add("checkbox", undefined,
-            "\u5408\u5E76\u540E\u81EA\u52A8\u4FEE\u590D\u5BFC\u51FAPNG\uFF08\u5916\u90E8\u5DE5\u5177\u8F6C\u6807\u51C6\u900F\u660E\uFF09");
-        chkAutoFix.value = true;
+            "\u5408\u5E76\u540E\u4FEE\u590D\u9ED1\u5E95\uFF08\u5916\u90E8\u5DE5\u5177\u8F6C\u6807\u51C6\u900F\u660E\uFF09");
+        chkAutoFix.value = false;
 
         // 把勾选状态同步到全局对象，让 Ctrl+Tab 快捷键（_doMergeLayers）也能遵守
         function _syncOpts() {
