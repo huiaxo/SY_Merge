@@ -35,6 +35,57 @@ import numpy as np
 from PIL import Image
 
 
+# ---- 窗口模式安全输出流 ----
+# PyInstaller --noconsole 下，sys.stdout 的底层 buffer 可能是 None：
+# 普通 print() 只是缓冲、不报错，但 sys.stdout.flush() 会真正去写那个
+# None buffer，触发 "'NoneType' object has no attribute 'flush'" 崩溃
+# （手动拖拽运行时尤其常见，因为走到了脚本末尾的 flush）。
+# 用一层安全包装，把 write/flush/reconfigure 全部包成「失败即忽略」，
+# 彻底避免窗口模式下因 stdout 不可用而崩溃。
+class _SafeStream(object):
+    def __init__(self, real):
+        self._real = real
+
+    def write(self, s):
+        try:
+            if self._real is not None:
+                return self._real.write(s)
+        except Exception:
+            pass
+        return 0
+
+    def flush(self):
+        try:
+            if self._real is not None:
+                self._real.flush()
+        except Exception:
+            pass
+
+    def reconfigure(self, *a, **k):
+        try:
+            if self._real is not None:
+                return self._real.reconfigure(*a, **k)
+        except Exception:
+            pass
+
+    def isatty(self):
+        return False
+
+    def fileno(self):
+        try:
+            if self._real is not None:
+                return self._real.fileno()
+        except Exception:
+            pass
+        raise OSError("no fileno")
+
+
+if sys.stdout is None or getattr(sys.stdout, "buffer", None) is None:
+    sys.stdout = _SafeStream(sys.stdout)
+if sys.stderr is None or getattr(sys.stderr, "buffer", None) is None:
+    sys.stderr = _SafeStream(sys.stderr)
+
+
 def bleed_transparent(rgb, mask, scale=16, iters=400):
     """
     用周围不透明像素的颜色填充透明区（去黑边）。
@@ -417,7 +468,10 @@ def main():
 
     # 绿色"处理完毕"作为明确完成信号
     _print_green("\n✓ 处理完毕")
-    sys.stdout.flush()
+    try:
+        sys.stdout.flush()
+    except Exception:
+        pass
 
     # 关键：处理完全结束后再停留几秒才退出。
     # 放在 Python 里 sleep 而不是交给 bat 的 timeout 命令——
@@ -427,4 +481,21 @@ def main():
 
 
 if __name__ == '__main__':
-    main()
+    try:
+        main()
+    except SystemExit:
+        raise
+    except Exception:
+        # 任何未预期异常都写日志到 %TEMP%/SY_Merge_fix_err.log，方便排查，
+        # 不再弹出易误导的 PyInstaller 崩溃框（窗口模式无控制台）。
+        try:
+            import traceback as _tb
+            _log = open(os.path.join(os.environ.get("TEMP", os.getcwd()),
+                                     "SY_Merge_fix_err.log"), "a", encoding="utf-8")
+            _log.write("[%s]\n" % time.strftime("%Y-%m-%d %H:%M:%S"))
+            _tb.print_exc(file=_log)
+            _log.write("\n")
+            _log.close()
+        except Exception:
+            pass
+        sys.exit(1)

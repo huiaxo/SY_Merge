@@ -8,3 +8,8 @@ Thumbs.db
 
 # 本地日志（不影响交付物）
 *.log
+
+# 打包/清理产生的临时副本（非交付物）
+PNGfix/fix_alpha.bak.exe
+_build/
+__pycache__/
