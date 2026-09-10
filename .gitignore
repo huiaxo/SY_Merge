@@ -1,0 +1,10 @@
+# Python 缓存 / 临时
+__pycache__/
+*.pyc
+*.pyo
+.DS_Store
+Thumbs.db
+*~
+
+# 本地日志（不影响交付物）
+*.log

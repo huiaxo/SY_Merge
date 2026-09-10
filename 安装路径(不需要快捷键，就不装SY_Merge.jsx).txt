@@ -1,0 +1,10 @@
+SY_Merge_Run  （不需要快捷键，可以不装这个）
+\Adobe After Effects \Support Files\Scripts
+
+
+SY_Merge
+\Adobe After Effects \Support Files\Scripts\ScriptUI Panels
+
+
+PNGfix
+\Adobe After Effects \Support Files\Scripts\ScriptUI Panels
