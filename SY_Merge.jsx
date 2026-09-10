@@ -821,6 +821,8 @@
             alert("[SY_Merge] 导入序列出错: " + err.toString() + (err.line ? "  (line " + err.line + ")" : ""));
         } finally {
             app.endUndoGroup();
+            // 关键：完成后清除「进行中」标记，否则第二次多帧合并会一直误报「正在进行中」
+            $.global._syFrames = null;
         }
     }
 
