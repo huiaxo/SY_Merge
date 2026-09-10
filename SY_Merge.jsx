@@ -688,15 +688,15 @@
 
         // 合并按钮
         var btnMerge = pal.add("button", undefined, "\u5408\u5E76");
-        btnMerge.alignment = ["left", "center"];
+        btnMerge.alignment = ["fill", "center"];
         btnMerge.helpTip = "\u5C06\u9009\u4E2D\u56FE\u5C42\u5408\u5E76\u4E3A\u4E00\u5F20 PNG \u5355\u5C42 (Ctrl+Tab)";
 
         var btnFixBlack = pal.add("button", undefined, "\u5904\u7406\u53D1\u9ED1");
-        btnFixBlack.alignment = ["left", "center"];
+        btnFixBlack.alignment = ["fill", "center"];
         btnFixBlack.helpTip = "\u5C06\u9009\u4E2D\u7D20\u6750\u7684 Alpha \u6539\u4E3A\u300C\u9884\u4E58 - \u9ED1\u8272\u8499\u7248\u300D\uFF0C\u4FEE\u590D\u900F\u660E\u533A\u53D1\u9ED1";
 
         var btnDelHidden = pal.add("button", undefined, "\u5220\u9664\u9690\u85CF");
-        btnDelHidden.alignment = ["left", "center"];
+        btnDelHidden.alignment = ["fill", "center"];
         btnDelHidden.helpTip = "\u5220\u9664\u5F53\u524D\u5408\u6210\u4E2D\u5408\u5E76\u540E\u4FDD\u7559\u7684\u9690\u85CF\u6E90\u56FE\u5C42";
 
         // 选项区
