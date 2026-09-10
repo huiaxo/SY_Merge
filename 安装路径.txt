@@ -6,5 +6,5 @@ SY_Merge
 \Adobe After Effects \Support Files\Scripts\ScriptUI Panels
 
 
-PNGfix
+PNGfix（装这个是为了可以自动修复发黑png，也可以点进去看有手动修复教程）
 \Adobe After Effects \Support Files\Scripts\ScriptUI Panels
