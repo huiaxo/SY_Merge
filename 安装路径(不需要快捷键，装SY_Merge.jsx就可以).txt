@@ -1,0 +1,6 @@
+SY_Merge_Run
+\Adobe After Effects \Support Files\Scripts
+
+
+SY_Merge
+\Adobe After Effects \Support Files\Scripts\ScriptUI Panels
