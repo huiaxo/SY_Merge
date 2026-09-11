@@ -69,6 +69,60 @@
         }
     }
 
+    // ====== 分辨率保护：导出强制完整分辨率 ======
+    // 现象：saveFrameToPng 会按合成当前的「分辨率/向下采样系数」渲染，
+    // 预览窗口设成 1/2、1/3 时，导出的 PNG 会跟着变成半分辨率 / 三分之一分辨率。
+    // 对策：导出前把合成强制设为 [1,1]（完整），PNG 完整落盘后再还原用户原本的设置。
+    // 开销：只有两次属性读写，对合并速度没有实际影响。
+    // 安全：不支持该属性的版本会静默跳过，行为等同改动前（不会更差）。
+    function _syForceFullRes(compList) {
+        var saved = [];
+        try {
+            for (var i = 0; i < compList.length; i++) {
+                var c = compList[i];
+                if (!c) continue;
+                var old = null;
+                try { old = c.resolutionFactor; } catch (e1) { old = null; }
+                if (!old) continue;   // 该合成/版本不支持 → 跳过，行为等同改动前
+                try {
+                    c.resolutionFactor = [1, 1];
+                    saved.push({ id: c.id, old: old });
+                } catch (e2) {}
+            }
+        } catch (e) {}
+        return saved;
+    }
+
+    // 还原导出前强制改过的分辨率（正常完成 / 出错 / 提前 return 都会走到）
+    function _syRestoreRes(saved) {
+        try {
+            if (!saved || !saved.length) return;
+            for (var i = 0; i < saved.length; i++) {
+                var c = app.project.itemByID(saved[i].id);
+                if (c) { try { c.resolutionFactor = saved[i].old; } catch (e2) {} }
+            }
+        } catch (e) {}
+    }
+
+    // 读 PNG 实际像素尺寸（仅用于日志核对，失败返回 null，不影响任何流程）
+    function _pngSize(path) {
+        try {
+            var f = new File(path);
+            if (!f.exists || f.length < 24) return null;
+            f.encoding = "BINARY";
+            if (!f.open("r")) return null;
+            var head = f.read(24);
+            f.close();
+            if (!head || head.length < 24) return null;
+            // PNG/IHDR：宽在第 16~19 字节，高在第 20~23 字节（大端）
+            var w = ((head.charCodeAt(16) & 0xFF) << 24) | ((head.charCodeAt(17) & 0xFF) << 16) |
+                    ((head.charCodeAt(18) & 0xFF) << 8) | (head.charCodeAt(19) & 0xFF);
+            var h = ((head.charCodeAt(20) & 0xFF) << 24) | ((head.charCodeAt(21) & 0xFF) << 16) |
+                    ((head.charCodeAt(22) & 0xFF) << 8) | (head.charCodeAt(23) & 0xFF);
+            return [w, h];
+        } catch (e) { return null; }
+    }
+
     // ====== 非阻塞轮询：等 PNG 完整写入 ======
     // 用 app.scheduleTask 让出主线程——等待期间 AE 界面不冻结，
     // 后台写入线程也不必跟主线程抢资源，可能因此写得更顺。
@@ -135,6 +189,16 @@
                 }
             }
             if (!comp) { alert("[SY_Merge] \u627E\u4E0D\u5230\u539F\u5408\u6210\u3002"); return; }
+
+            // 记录导出 PNG 的实际像素尺寸，便于核对是否仍受预览分辨率影响
+            try {
+                var psz = _pngSize(a.pngPath);
+                if (psz) {
+                    _fixLog("png size=" + psz[0] + "x" + psz[1] +
+                            " comp=" + comp.width + "x" + comp.height +
+                            (psz[0] === comp.width && psz[1] === comp.height ? " [OK 完整分辨率]" : " [!! 尺寸不符]"));
+                }
+            } catch (eSz) {}
 
             // ---- Step 1: 隐藏临时预合成图层（shy + 不可见），不删除 ----
             if (preComp) {
@@ -227,6 +291,7 @@
             alert("[SY_Merge] \u5BFC\u56DE\u51FA\u9519: " + err.toString() +
                   (err.line ? "  (line " + err.line + ")" : ""));
         } finally {
+            _syRestoreRes(a.rfSaved);   // 还原导出前的预览分辨率设置
             app.endUndoGroup();
             $.global._syMergeArgs = null;
         }
@@ -597,6 +662,8 @@
             // saveFrameToPng 是异步的：调用会立即返回，PNG 在后台慢慢写。
             // 真正的等待交给 pollAndImport（轮询 IEND 标记），这里不阻塞。
             var pngFile = new File(outFolder.fsName + "/raster_" + stamp + ".png");
+            // 导出前强制完整分辨率（不受预览窗口 1/2、1/3 设置影响），PNG 落盘后自动还原
+            var rfSaved = _syForceFullRes([preComp, comp]);
             preComp.saveFrameToPng(frameTime, pngFile);
             var pngPath = pngFile.fsName;
 
@@ -613,6 +680,7 @@
                 mergeName: mergeName,
                 preCompName: preCompName,
                 srcCompIds: srcCompIds,
+                rfSaved: rfSaved,   // 导出前强制的完整分辨率设置（PNG 落盘后还原）
                 autoFix: autoFix,   // 是否用外部工具把磁盘 PNG 转成标准透明
                 fixed: false,      // 外部工具是否成功处理（收尾时据此决定导入方式）
                 tries: 0,       // 已轮询次数
@@ -685,6 +753,8 @@
             var indices = [];
             for (var i = 0; i < sel.length; i++) indices.push(sel[i].index);
             var preComp = comp.layers.precompose(indices, "Raster_src_" + bottomName, true);
+            // 导出前强制完整分辨率（不受预览窗口 1/2、1/3 设置影响），整组帧导完后自动还原
+            var rfSaved = _syForceFullRes([preComp, comp]);
 
             var outFolder;
             if (app.project.file) outFolder = new Folder(app.project.file.parent.fsName + "/_raster_cache");
@@ -696,6 +766,7 @@
                 compId: comp.id, preCompId: preComp.id, preCompName: preComp.name,
                 anchorLayerId: anchorLayerId, mergeName: bottomName,
                 srcCompIdList: srcCompIdList,
+                rfSaved: rfSaved,
                 autoFix: autoFix,
                 outFolder: outFolder.fsName, stamp: stamp, fd: fd,
                 firstFrame: firstFrame, lastFrame: lastFrame,
@@ -775,6 +846,16 @@
             if (st.paths.length < 1) { alert("[SY_Merge] 没有成功导出任何帧。"); return; }
             st.paths.sort();
             var firstPath = st.paths[0];
+            // 记录首帧实际像素尺寸，便于核对是否仍受预览分辨率影响
+            try {
+                var psz = _pngSize(firstPath);
+                if (psz) {
+                    _fixLog("frames png size=" + psz[0] + "x" + psz[1] +
+                            " comp=" + comp.width + "x" + comp.height +
+                            " frames=" + st.paths.length +
+                            (psz[0] === comp.width && psz[1] === comp.height ? " [OK 完整分辨率]" : " [!! 尺寸不符]"));
+                }
+            } catch (eSz) {}
             var footage = null, lastErr = null;
             for (var attempt = 0; attempt < 5; attempt++) {
                 try {
@@ -820,6 +901,7 @@
         } catch (err) {
             alert("[SY_Merge] 导入序列出错: " + err.toString() + (err.line ? "  (line " + err.line + ")" : ""));
         } finally {
+            _syRestoreRes(st.rfSaved);   // 还原导出前的预览分辨率设置
             app.endUndoGroup();
             // 关键：完成后清除「进行中」标记，否则第二次多帧合并会一直误报「正在进行中」
             $.global._syFrames = null;
